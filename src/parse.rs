@@ -1,6 +1,11 @@
 use std::num::ParseFloatError;
 use std::num::ParseIntError;
 
+use hex::FromHexError;
+use lotus_proto::lotus;
+use lotus_proto::lotus::FormatType::FORMAT_TYPE_BASE64;
+use lotus_proto::lotus::FormatType::FORMAT_TYPE_HEX;
+use protobuf::descriptor::FieldOptions;
 use protobuf::reflect::EnumDescriptor;
 use protobuf::reflect::EnumValueDescriptor;
 use protobuf::reflect::FieldDescriptor;
@@ -28,6 +33,7 @@ use protobuf::well_known_types::wrappers::UInt32Value;
 use protobuf::well_known_types::wrappers::UInt64Value;
 use protobuf::Enum;
 use protobuf::MessageDyn;
+use protobuf::MessageField;
 use protobuf::MessageFull;
 use protobuf_support::lexer::json_number_lit::JsonNumberLit;
 use protobuf_support::lexer::lexer_impl::Lexer;
@@ -54,6 +60,8 @@ enum ParseErrorWithoutLocInner {
     UnknownEnumVariantName(String),
     #[error(transparent)]
     FromBase64Error(#[from] FromBase64Error),
+    #[error(transparent)]
+    FromHexError(#[from] FromHexError),
     #[error(transparent)]
     IncorrectStrLit(#[from] LexerError),
     #[error("Incorrect duration")]
@@ -92,6 +100,12 @@ impl From<TokenizerError> for ParseErrorWithoutLoc {
 impl From<FromBase64Error> for ParseErrorWithoutLoc {
     fn from(e: FromBase64Error) -> Self {
         ParseErrorWithoutLoc(ParseErrorWithoutLocInner::FromBase64Error(e))
+    }
+}
+
+impl From<FromHexError> for ParseErrorWithoutLoc {
+    fn from(e: FromHexError) -> Self {
+        ParseErrorWithoutLoc(ParseErrorWithoutLocInner::FromHexError(e))
     }
 }
 
@@ -305,7 +319,7 @@ impl<'a> Parser<'a> {
     }
 
     fn merge_bytes_value(&mut self, w: &mut BytesValue) -> ParseResultWithoutLoc<()> {
-        w.value = self.read_bytes()?;
+        w.value = self.read_bytes(FORMAT_TYPE_BASE64)?;
         Ok(())
     }
 
@@ -349,13 +363,19 @@ impl<'a> Parser<'a> {
         Ok(r)
     }
 
-    fn read_bytes(&mut self) -> ParseResultWithoutLoc<Vec<u8>> {
+    fn read_bytes(&mut self, format: lotus::FormatType) -> ParseResultWithoutLoc<Vec<u8>> {
         let s = self.read_string()?;
-        self.parse_bytes(&s)
+        self.parse_bytes(&s, format)
     }
 
-    fn parse_bytes(&self, s: &str) -> ParseResultWithoutLoc<Vec<u8>> {
-        Ok(base64::decode(s)?)
+    fn parse_bytes(&self, s: &str, format: lotus::FormatType) -> ParseResultWithoutLoc<Vec<u8>> {
+        match format {
+            FORMAT_TYPE_BASE64 => Ok(base64::decode(s)?),
+            FORMAT_TYPE_HEX => match s.starts_with("0x") {
+                true => Ok(hex::decode(&s[2..])?),
+                false => Ok(hex::decode(s)?),
+            },
+        }
     }
 
     fn read_enum(&mut self, descriptor: &EnumDescriptor) -> ParseResultWithoutLoc<i32> {
@@ -402,7 +422,11 @@ impl<'a> Parser<'a> {
         Ok(m)
     }
 
-    fn read_value(&mut self, t: &RuntimeType) -> ParseResultWithoutLoc<ReflectValueBox> {
+    fn read_value(
+        &mut self,
+        t: &RuntimeType,
+        options: &MessageField<FieldOptions>,
+    ) -> ParseResultWithoutLoc<ReflectValueBox> {
         match t {
             RuntimeType::I32 => self.read_i32().map(ReflectValueBox::from),
             RuntimeType::I64 => self.read_i64().map(ReflectValueBox::from),
@@ -412,7 +436,15 @@ impl<'a> Parser<'a> {
             RuntimeType::F64 => self.read_f64().map(ReflectValueBox::from),
             RuntimeType::Bool => self.read_bool().map(ReflectValueBox::from),
             RuntimeType::String => self.read_string().map(ReflectValueBox::from),
-            RuntimeType::VecU8 => self.read_bytes().map(ReflectValueBox::from),
+            RuntimeType::VecU8 => {
+                let format = lotus::exts::bytes
+                    .get(&options)
+                    .unwrap_or_default()
+                    .format
+                    .enum_value_or_default();
+
+                self.read_bytes(format).map(ReflectValueBox::from)
+            }
             RuntimeType::Enum(e) => self
                 .read_enum(&e)
                 .map(|v| ReflectValueBox::Enum(e.clone(), v)),
@@ -426,7 +458,7 @@ impl<'a> Parser<'a> {
         field: &FieldDescriptor,
         t: &RuntimeType,
     ) -> ParseResultWithoutLoc<()> {
-        field.set_singular_field(message, self.read_value(t)?);
+        field.set_singular_field(message, self.read_value(t, &field.proto().options)?);
         Ok(())
     }
 
@@ -463,7 +495,7 @@ impl<'a> Parser<'a> {
         repeated.clear();
 
         self.read_list(|s| {
-            repeated.push(s.read_value(t)?);
+            repeated.push(s.read_value(t, &field.proto().options)?);
             Ok(())
         })
     }
@@ -537,7 +569,7 @@ impl<'a> Parser<'a> {
         self.read_map(
             |ss, s| ss.parse_key(s, kt),
             |s, k| {
-                let v = s.read_value(vt)?;
+                let v = s.read_value(vt, &MessageField::none())?;
                 map.insert(k, v);
                 Ok(())
             },
@@ -911,4 +943,34 @@ pub fn parse_from_str_with_options<M: MessageFull>(
 /// Parse JSON to protobuf message.
 pub fn parse_from_str<M: MessageFull>(json: &str) -> ParseResult<M> {
     parse_from_str_with_options(json, &ParseOptions::default())
+}
+
+#[test]
+fn test_parse_from_str() {
+    use crate::test;
+
+    let txt = "{\"hex\": \"0x48656c6c6f20776f726c6421\", \"base64\": \"SGVsbG8gd29ybGQh\", \"bar\": {\"hex\": [\"0x48656c6c6f20776f726c6421\", \"0x48656c6c6f20776f726c6421\"], \"base64\": [\"SGVsbG8gd29ybGQh\", \"SGVsbG8gd29ybGQh\"]}}";
+
+    let foo: test::foo::Foo = parse_from_str(txt).unwrap();
+
+    assert_eq!(foo.hex, hex::decode("48656c6c6f20776f726c6421").unwrap());
+    assert_eq!(foo.base64, base64::decode("SGVsbG8gd29ybGQh").unwrap());
+    assert!(foo.bar.is_some());
+
+    let bar = foo.bar.unwrap();
+
+    assert_eq!(
+        bar.hex,
+        vec![
+            hex::decode("48656c6c6f20776f726c6421").unwrap(),
+            hex::decode("48656c6c6f20776f726c6421").unwrap(),
+        ]
+    );
+    assert_eq!(
+        bar.base64,
+        vec![
+            base64::decode("SGVsbG8gd29ybGQh").unwrap(),
+            base64::decode("SGVsbG8gd29ybGQh").unwrap(),
+        ]
+    );
 }

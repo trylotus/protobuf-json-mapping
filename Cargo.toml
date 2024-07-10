@@ -16,10 +16,11 @@ JSON mapping for Protocol Buffers messages.
 bench = false
 
 [dependencies]
-thiserror = "1.0.30"
-
+hex = "0.4.3"
+lotus-proto = { git = "https://github.com/trylotus/rust-lotus-proto.git", tag = "v1.0.0" }
 protobuf = "3.5.0"
 protobuf-support = "3.5.0"
+thiserror = "1.0.30"
 
 [package.metadata.docs.rs]
 all-features = true

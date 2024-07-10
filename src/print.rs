@@ -1,6 +1,10 @@
 use std::fmt;
 use std::fmt::Write as fmt_Write;
 
+use lotus_proto::lotus;
+use lotus_proto::lotus::FormatType::FORMAT_TYPE_BASE64;
+use lotus_proto::lotus::FormatType::FORMAT_TYPE_HEX;
+use protobuf::descriptor::FieldOptions;
 use protobuf::reflect::EnumDescriptor;
 use protobuf::reflect::EnumValueDescriptor;
 use protobuf::reflect::MessageRef;
@@ -29,6 +33,7 @@ use protobuf::well_known_types::wrappers::StringValue;
 use protobuf::well_known_types::wrappers::UInt32Value;
 use protobuf::well_known_types::wrappers::UInt64Value;
 use protobuf::MessageDyn;
+use protobuf::MessageField;
 
 use crate::base64;
 use crate::float;
@@ -66,7 +71,11 @@ struct Printer {
 }
 
 trait PrintableToJson {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()>;
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()>;
 }
 
 trait JsonFloat: fmt::Display + fmt::Debug + PrintableToJson {
@@ -102,7 +111,7 @@ impl JsonFloat for f32 {
 }
 
 impl PrintableToJson for f32 {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         Ok(self.print_to_json_impl(&mut w.buf)?)
     }
 }
@@ -122,45 +131,45 @@ impl JsonFloat for f64 {
 }
 
 impl PrintableToJson for f64 {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         self.print_to_json_impl(&mut w.buf)
     }
 }
 
 impl PrintableToJson for u64 {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         // 64-bit integers are quoted by default
         Ok(write!(w.buf, "\"{}\"", self)?)
     }
 }
 
 impl PrintableToJson for i64 {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         // 64-bit integers are quoted by default
         Ok(write!(w.buf, "\"{}\"", self)?)
     }
 }
 
 impl PrintableToJson for u32 {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         Ok(write!(w.buf, "{}", self)?)
     }
 }
 
 impl PrintableToJson for i32 {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         Ok(write!(w.buf, "{}", self)?)
     }
 }
 
 impl PrintableToJson for bool {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         Ok(write!(w.buf, "{}", self)?)
     }
 }
 
 impl PrintableToJson for str {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         write!(w.buf, "\"")?;
         for c in self.chars() {
             match c {
@@ -179,36 +188,62 @@ impl PrintableToJson for str {
 }
 
 impl PrintableToJson for String {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
-        self.as_str().print_to_json(w)
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
+        self.as_str().print_to_json(w, options)
     }
 }
 
 impl PrintableToJson for [u8] {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
-        let encoded = base64::encode(self);
-        encoded.print_to_json(w)
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
+        let format = lotus::exts::bytes
+            .get(options)
+            .unwrap_or_default()
+            .format
+            .enum_value_or_default();
+
+        let encoded = match format {
+            FORMAT_TYPE_BASE64 => base64::encode(self),
+            FORMAT_TYPE_HEX => format!("0x{}", hex::encode(self)),
+        };
+
+        encoded.print_to_json(w, options)
     }
 }
 
 impl PrintableToJson for Vec<u8> {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
-        self.as_slice().print_to_json(w)
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
+        self.as_slice().print_to_json(w, options)
     }
 }
 
 impl<'a> PrintableToJson for ReflectValueRef<'a> {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
         match self {
-            ReflectValueRef::U32(v) => w.print_printable(v),
-            ReflectValueRef::U64(v) => w.print_printable(v),
-            ReflectValueRef::I32(v) => w.print_printable(v),
-            ReflectValueRef::I64(v) => w.print_printable(v),
-            ReflectValueRef::F32(v) => w.print_printable(v),
-            ReflectValueRef::F64(v) => w.print_printable(v),
-            ReflectValueRef::Bool(v) => w.print_printable(v),
-            ReflectValueRef::String(v) => w.print_printable::<str>(v),
-            ReflectValueRef::Bytes(v) => w.print_printable::<[u8]>(v),
+            ReflectValueRef::U32(v) => w.print_printable(v, options),
+            ReflectValueRef::U64(v) => w.print_printable(v, options),
+            ReflectValueRef::I32(v) => w.print_printable(v, options),
+            ReflectValueRef::I64(v) => w.print_printable(v, options),
+            ReflectValueRef::F32(v) => w.print_printable(v, options),
+            ReflectValueRef::F64(v) => w.print_printable(v, options),
+            ReflectValueRef::Bool(v) => w.print_printable(v, options),
+            ReflectValueRef::String(v) => w.print_printable::<str>(v, options),
+            ReflectValueRef::Bytes(v) => w.print_printable::<[u8]>(v, options),
             ReflectValueRef::Enum(d, v) => w.print_enum(d, *v),
             ReflectValueRef::Message(v) => w.print_message(v),
         }
@@ -216,7 +251,7 @@ impl<'a> PrintableToJson for ReflectValueRef<'a> {
 }
 
 impl PrintableToJson for Duration {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         let sign = if self.seconds >= 0 { "" } else { "-" };
         Ok(write!(
             w.buf,
@@ -229,29 +264,41 @@ impl PrintableToJson for Duration {
 }
 
 impl PrintableToJson for Timestamp {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
         if self.nanos < 0 {
             return Err(PrintError(PrintErrorInner::TimestampNegativeNanos));
         }
         let tm_utc = TmUtc::from_protobuf_timestamp(self.seconds, self.nanos as u32);
-        w.print_printable(&tm_utc.to_string())
+        w.print_printable(&tm_utc.to_string(), options)
     }
 }
 
 impl PrintableToJson for FieldMask {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
-        w.print_printable(&self.paths.join(","))
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
+        w.print_printable(&self.paths.join(","), options)
     }
 }
 
 impl PrintableToJson for Any {
-    fn print_to_json(&self, _w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, _w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         Err(PrintError(PrintErrorInner::AnyPrintingIsNotImplemented))
     }
 }
 
 impl PrintableToJson for Value {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
         match self.kind {
             // None should not be possible here, but it's better to print null than crash
             None => w.print_json_null(),
@@ -260,35 +307,43 @@ impl PrintableToJson for Value {
                     Ok(value) => w.print_wk_null_value(&value),
                     Err(n) => {
                         // Practically not possible, but it is safer this way.
-                        w.print_printable(&n)
+                        w.print_printable(&n, options)
                     }
                 }
             }
-            Some(value::Kind::BoolValue(b)) => w.print_printable(&b),
-            Some(value::Kind::NumberValue(n)) => w.print_printable(&n),
-            Some(value::Kind::StringValue(ref s)) => w.print_printable::<String>(&s),
-            Some(value::Kind::StructValue(ref s)) => w.print_printable(&s),
-            Some(value::Kind::ListValue(ref l)) => w.print_printable(&l),
+            Some(value::Kind::BoolValue(b)) => w.print_printable(&b, options),
+            Some(value::Kind::NumberValue(n)) => w.print_printable(&n, options),
+            Some(value::Kind::StringValue(ref s)) => w.print_printable::<String>(&s, options),
+            Some(value::Kind::StructValue(ref s)) => w.print_printable(&s, options),
+            Some(value::Kind::ListValue(ref l)) => w.print_printable(&l, options),
             Some(_) => Err(PrintError(PrintErrorInner::UnknownStructValueKind)),
         }
     }
 }
 
 impl PrintableToJson for ListValue {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
-        w.print_list(&self.values)
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
+        w.print_list(&self.values, options)
     }
 }
 
 impl PrintableToJson for Struct {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
+    fn print_to_json(&self, w: &mut Printer, _: &MessageField<FieldOptions>) -> PrintResult<()> {
         w.print_object(&self.fields)
     }
 }
 
 impl<'a, P: PrintableToJson> PrintableToJson for &'a P {
-    fn print_to_json(&self, w: &mut Printer) -> PrintResult<()> {
-        (*self).print_to_json(w)
+    fn print_to_json(
+        &self,
+        w: &mut Printer,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
+        (*self).print_to_json(w, options)
     }
 }
 
@@ -299,11 +354,15 @@ trait ObjectKey {
 impl<'a> ObjectKey for ReflectValueRef<'a> {
     fn print_object_key(&self, w: &mut Printer) -> PrintResult<()> {
         match self {
-            ReflectValueRef::String(v) => return w.print_printable::<str>(v),
-            ReflectValueRef::Bytes(v) => return w.print_printable::<[u8]>(v),
+            ReflectValueRef::String(v) => {
+                return w.print_printable::<str>(v, &MessageField::none())
+            }
+            ReflectValueRef::Bytes(v) => {
+                return w.print_printable::<[u8]>(v, &MessageField::none())
+            }
             // do not quote, because printable is quoted
-            ReflectValueRef::U64(v) => return w.print_printable(v),
-            ReflectValueRef::I64(v) => return w.print_printable(v),
+            ReflectValueRef::U64(v) => return w.print_printable(v, &MessageField::none()),
+            ReflectValueRef::I64(v) => return w.print_printable(v, &MessageField::none()),
             ReflectValueRef::Enum(d, v) if !w.print_options.enum_values_int => {
                 return w.print_enum(d, *v)
             }
@@ -313,9 +372,9 @@ impl<'a> ObjectKey for ReflectValueRef<'a> {
         write!(w.buf, "\"")?;
 
         match self {
-            ReflectValueRef::U32(v) => w.print_printable(v),
-            ReflectValueRef::I32(v) => w.print_printable(v),
-            ReflectValueRef::Bool(v) => w.print_printable(v),
+            ReflectValueRef::U32(v) => w.print_printable(v, &MessageField::none()),
+            ReflectValueRef::I32(v) => w.print_printable(v, &MessageField::none()),
+            ReflectValueRef::Bool(v) => w.print_printable(v, &MessageField::none()),
             ReflectValueRef::Enum(d, v) if w.print_options.enum_values_int => w.print_enum(d, *v),
             ReflectValueRef::Enum(..)
             | ReflectValueRef::U64(_)
@@ -335,7 +394,7 @@ impl<'a> ObjectKey for ReflectValueRef<'a> {
 
 impl ObjectKey for String {
     fn print_object_key(&self, w: &mut Printer) -> PrintResult<()> {
-        w.print_printable(self)
+        w.print_printable(self, &MessageField::none())
     }
 }
 
@@ -359,11 +418,15 @@ impl Printer {
         Ok(write!(self.buf, "null")?)
     }
 
-    fn print_printable<F: PrintableToJson + ?Sized>(&mut self, f: &F) -> PrintResult<()> {
-        f.print_to_json(self)
+    fn print_printable<F: PrintableToJson + ?Sized>(
+        &mut self,
+        f: &F,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
+        f.print_to_json(self, options)
     }
 
-    fn print_list<I>(&mut self, items: I) -> PrintResult<()>
+    fn print_list<I>(&mut self, items: I, options: &MessageField<FieldOptions>) -> PrintResult<()>
     where
         I: IntoIterator,
         I::Item: PrintableToJson,
@@ -373,14 +436,18 @@ impl Printer {
             if i != 0 {
                 write!(self.buf, ", ")?;
             }
-            self.print_printable(&item)?;
+            self.print_printable(&item, options)?;
         }
         write!(self.buf, "]")?;
         Ok(())
     }
 
-    fn print_repeated(&mut self, repeated: &ReflectRepeatedRef) -> PrintResult<()> {
-        self.print_list(repeated)
+    fn print_repeated(
+        &mut self,
+        repeated: &ReflectRepeatedRef,
+        options: &MessageField<FieldOptions>,
+    ) -> PrintResult<()> {
+        self.print_list(repeated, options)
     }
 
     fn print_object<I, K, V>(&mut self, items: I) -> PrintResult<()>
@@ -396,7 +463,7 @@ impl Printer {
             }
             k.print_object_key(self)?;
             write!(self.buf, ": ")?;
-            self.print_printable(&v)?;
+            self.print_printable(&v, &MessageField::none())?;
         }
         write!(self.buf, "}}")?;
         Ok(())
@@ -411,7 +478,7 @@ impl Printer {
             self.print_wk_null_value(&null_value)
         } else {
             if self.print_options.enum_values_int {
-                self.print_printable(&value.value())
+                self.print_printable(&value.value(), &MessageField::none())
             } else {
                 Ok(write!(self.buf, "\"{}\"", value.name())?)
             }
@@ -420,26 +487,26 @@ impl Printer {
 
     fn print_enum(&mut self, descriptor: &EnumDescriptor, v: i32) -> PrintResult<()> {
         if self.print_options.enum_values_int {
-            self.print_printable(&v)
+            self.print_printable(&v, &MessageField::none())
         } else {
             match descriptor.value_by_number(v) {
                 Some(value) => self.print_enum_known(&value),
-                None => self.print_printable(&v),
+                None => self.print_printable(&v, &MessageField::none()),
             }
         }
     }
 
     fn print_message(&mut self, message: &MessageRef) -> PrintResult<()> {
         if let Some(duration) = message.downcast_ref::<Duration>() {
-            self.print_printable(duration)
+            self.print_printable(duration, &MessageField::none())
         } else if let Some(timestamp) = message.downcast_ref::<Timestamp>() {
-            self.print_printable(timestamp)
+            self.print_printable(timestamp, &MessageField::none())
         } else if let Some(field_mask) = message.downcast_ref::<FieldMask>() {
-            self.print_printable(field_mask)
+            self.print_printable(field_mask, &MessageField::none())
         } else if let Some(any) = message.downcast_ref::<Any>() {
-            self.print_printable(any)
+            self.print_printable(any, &MessageField::none())
         } else if let Some(value) = message.downcast_ref::<Value>() {
-            self.print_printable(value)
+            self.print_printable(value, &MessageField::none())
         } else if let Some(value) = message.downcast_ref::<DoubleValue>() {
             self.print_wrapper(value)
         } else if let Some(value) = message.downcast_ref::<FloatValue>() {
@@ -459,9 +526,9 @@ impl Printer {
         } else if let Some(value) = message.downcast_ref::<BytesValue>() {
             self.print_wrapper(value)
         } else if let Some(value) = message.downcast_ref::<ListValue>() {
-            self.print_printable(value)
+            self.print_printable(value, &MessageField::none())
         } else if let Some(value) = message.downcast_ref::<Struct>() {
-            self.print_printable(value)
+            self.print_printable(value, &MessageField::none())
         } else {
             self.print_regular_message(message)
         }
@@ -499,21 +566,21 @@ impl Printer {
                                 let v = field.get_singular_field_or_default(&**message);
                                 self.print_comma_but_first(&mut first)?;
                                 write!(self.buf, "\"{}\": ", json_field_name)?;
-                                self.print_printable(&v)?;
+                                self.print_printable(&v, &field.proto().options)?;
                             }
                         }
                     }
                     Some(v) => {
                         self.print_comma_but_first(&mut first)?;
                         write!(self.buf, "\"{}\": ", json_field_name)?;
-                        self.print_printable(&v)?;
+                        self.print_printable(&v, &field.proto().options)?;
                     }
                 },
                 ReflectFieldRef::Repeated(v) => {
                     if !v.is_empty() || self.print_options.always_output_default_values {
                         self.print_comma_but_first(&mut first)?;
                         write!(self.buf, "\"{}\": ", json_field_name)?;
-                        self.print_repeated(&v)?;
+                        self.print_repeated(&v, &field.proto().options)?;
                     }
                 }
                 ReflectFieldRef::Map(v) => {
@@ -538,7 +605,7 @@ impl Printer {
         W: WellKnownWrapper,
         W::Underlying: PrintableToJson,
     {
-        self.print_printable(value.get_ref())
+        self.print_printable(value.get_ref(), &MessageField::none())
     }
 }
 
@@ -583,4 +650,28 @@ pub fn print_to_string_with_options(
 /// Serialize message to JSON according to protobuf specification.
 pub fn print_to_string(message: &dyn MessageDyn) -> PrintResult<String> {
     print_to_string_with_options(message, &PrintOptions::default())
+}
+
+#[test]
+fn test_print_to_string() {
+    use crate::test;
+
+    let mut bar = test::foo::Bar::new();
+    bar.hex = vec![
+        hex::decode("48656c6c6f20776f726c6421").unwrap(),
+        hex::decode("48656c6c6f20776f726c6421").unwrap(),
+    ];
+    bar.base64 = vec![
+        base64::decode("SGVsbG8gd29ybGQh").unwrap(),
+        base64::decode("SGVsbG8gd29ybGQh").unwrap(),
+    ];
+
+    let mut foo = test::foo::Foo::new();
+    foo.hex = hex::decode("48656c6c6f20776f726c6421").unwrap();
+    foo.base64 = base64::decode("SGVsbG8gd29ybGQh").unwrap();
+    foo.bar = MessageField::some(bar);
+
+    let txt = print_to_string(&foo).unwrap();
+
+    assert_eq!(txt, "{\"hex\": \"0x48656c6c6f20776f726c6421\", \"base64\": \"SGVsbG8gd29ybGQh\", \"bar\": {\"hex\": [\"0x48656c6c6f20776f726c6421\", \"0x48656c6c6f20776f726c6421\"], \"base64\": [\"SGVsbG8gd29ybGQh\", \"SGVsbG8gd29ybGQh\"]}}")
 }

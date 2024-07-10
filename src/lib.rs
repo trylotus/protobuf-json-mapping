@@ -7,6 +7,7 @@ mod parse;
 mod print;
 mod rfc_3339;
 mod well_known_wrapper;
+mod test;
 
 pub use self::parse::merge_from_str;
 pub use self::parse::merge_from_str_with_options;

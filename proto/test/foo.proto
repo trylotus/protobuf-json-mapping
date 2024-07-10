@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package test;
+
+import "lotus/lotus.proto";
+
+message Foo {
+  bytes hex = 1 [(lotus.bytes).format = FORMAT_TYPE_HEX];
+  bytes base64 = 2 [(lotus.bytes).format = FORMAT_TYPE_BASE64];
+  Bar bar = 3;
+}
+
+message Bar {
+  repeated bytes hex = 1 [(lotus.bytes).format = FORMAT_TYPE_HEX];
+  repeated bytes base64 = 2 [(lotus.bytes).format = FORMAT_TYPE_BASE64];
+}
