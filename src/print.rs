@@ -410,7 +410,7 @@ impl Printer {
             *first = false;
             Ok(())
         } else {
-            write!(self.buf, ", ")
+            write!(self.buf, ",")
         }
     }
 
@@ -434,7 +434,7 @@ impl Printer {
         write!(self.buf, "[")?;
         for (i, item) in items.into_iter().enumerate() {
             if i != 0 {
-                write!(self.buf, ", ")?;
+                write!(self.buf, ",")?;
             }
             self.print_printable(&item, options)?;
         }
@@ -459,10 +459,10 @@ impl Printer {
         write!(self.buf, "{{")?;
         for (i, (k, v)) in items.into_iter().enumerate() {
             if i != 0 {
-                write!(self.buf, ", ")?;
+                write!(self.buf, ",")?;
             }
             k.print_object_key(self)?;
-            write!(self.buf, ": ")?;
+            write!(self.buf, ":")?;
             self.print_printable(&v, &MessageField::none())?;
         }
         write!(self.buf, "}}")?;
@@ -565,28 +565,28 @@ impl Printer {
                             if !is_message && !is_oneof {
                                 let v = field.get_singular_field_or_default(&**message);
                                 self.print_comma_but_first(&mut first)?;
-                                write!(self.buf, "\"{}\": ", json_field_name)?;
+                                write!(self.buf, "\"{}\":", json_field_name)?;
                                 self.print_printable(&v, &field.proto().options)?;
                             }
                         }
                     }
                     Some(v) => {
                         self.print_comma_but_first(&mut first)?;
-                        write!(self.buf, "\"{}\": ", json_field_name)?;
+                        write!(self.buf, "\"{}\":", json_field_name)?;
                         self.print_printable(&v, &field.proto().options)?;
                     }
                 },
                 ReflectFieldRef::Repeated(v) => {
                     if !v.is_empty() || self.print_options.always_output_default_values {
                         self.print_comma_but_first(&mut first)?;
-                        write!(self.buf, "\"{}\": ", json_field_name)?;
+                        write!(self.buf, "\"{}\":", json_field_name)?;
                         self.print_repeated(&v, &field.proto().options)?;
                     }
                 }
                 ReflectFieldRef::Map(v) => {
                     if !v.is_empty() || self.print_options.always_output_default_values {
                         self.print_comma_but_first(&mut first)?;
-                        write!(self.buf, "\"{}\": ", json_field_name)?;
+                        write!(self.buf, "\"{}\":", json_field_name)?;
                         self.print_map(&v)?;
                     }
                 }
@@ -673,5 +673,5 @@ fn test_print_to_string() {
 
     let txt = print_to_string(&foo).unwrap();
 
-    assert_eq!(txt, "{\"hex\": \"0x48656c6c6f20776f726c6421\", \"base64\": \"SGVsbG8gd29ybGQh\", \"bar\": {\"hex\": [\"0x48656c6c6f20776f726c6421\", \"0x48656c6c6f20776f726c6421\"], \"base64\": [\"SGVsbG8gd29ybGQh\", \"SGVsbG8gd29ybGQh\"]}}")
+    assert_eq!(txt, "{\"hex\":\"0x48656c6c6f20776f726c6421\",\"base64\":\"SGVsbG8gd29ybGQh\",\"bar\":{\"hex\":[\"0x48656c6c6f20776f726c6421\",\"0x48656c6c6f20776f726c6421\"],\"base64\":[\"SGVsbG8gd29ybGQh\",\"SGVsbG8gd29ybGQh\"]}}")
 }

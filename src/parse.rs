@@ -949,7 +949,7 @@ pub fn parse_from_str<M: MessageFull>(json: &str) -> ParseResult<M> {
 fn test_parse_from_str() {
     use crate::test;
 
-    let txt = "{\"hex\": \"0x48656c6c6f20776f726c6421\", \"base64\": \"SGVsbG8gd29ybGQh\", \"bar\": {\"hex\": [\"0x48656c6c6f20776f726c6421\", \"0x48656c6c6f20776f726c6421\"], \"base64\": [\"SGVsbG8gd29ybGQh\", \"SGVsbG8gd29ybGQh\"]}}";
+    let txt = "{\"hex\":\"0x48656c6c6f20776f726c6421\",\"base64\":\"SGVsbG8gd29ybGQh\",\"bar\":{\"hex\":[\"0x48656c6c6f20776f726c6421\",\"0x48656c6c6f20776f726c6421\"],\"base64\":[\"SGVsbG8gd29ybGQh\",\"SGVsbG8gd29ybGQh\"]}}";
 
     let foo: test::foo::Foo = parse_from_str(txt).unwrap();
 
